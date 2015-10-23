@@ -14,6 +14,7 @@ recipe "selinux", "Use LWRP with state attribute to manage SELinux state."
 recipe "selinux::enforcing", "Use :enforcing as the action for the selinux_state."
 recipe "selinux::permissive", "Use :permissive as the action for the selinux_state."
 recipe "selinux::disabled", "Use :disabled as the action for the selinux_state."
+recipe "selinux::rules", "Handle package installations required for SELinux rules compilation"
 
 attribute "selinux/state",
   :display_name => "SELinux State",

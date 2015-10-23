@@ -1,0 +1,23 @@
+module <%= @name %> <%= @version %>;
+
+require {
+<% @types.sort.each do |target| -%>
+  type <%= target %>;
+<% end %>
+
+<% @classes.sort.each do |class_name,perm_set| -%>
+<% class_permissions = perm_set.length > 1 ? "{ #{perm_set.sort.join(' ')} }" : "#{perm_set[0]}" -%>
+  class <%= class_name %> <%= class_permissions %>;
+<% end %>
+}
+
+<% @rules.sort.each do |app,details| -%>
+# ======= App = <%= app %> =======
+<%   details.sort.each do |comment,se_details| -%>
+# ======= <%= comment %> =======
+<%     se_details.sort.each do |source_target_class,perm_set| -%>
+<%       class_permissions = perm_set.length > 1 ? "{ #{perm_set.sort.join(' ')} }" : "#{perm_set[0]}" -%>
+allow <%= source_target_class.split('::')[0] %> <%= source_target_class.split('::')[1] %>:<%= source_target_class.split('::')[2] %> <%= class_permissions %>;
+<%     end -%>
+<%   end -%>
+<% end %>
