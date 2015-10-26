@@ -3,38 +3,36 @@ require 'chef/resource/lwrp_base'
 
 # Backwards compatibility
 class Chef
-  class Resource::SelinuxCompile < Resource::LWRPBase
+  class Resource::SelinuxModule < Resource::LWRPBase
     self.resource_name = 'selinux_compile'
-    actions :compile
+    actions :create, :compile
 
     state_attrs :runner,
-                :from_file,
-                :seperate_files,
                 :version,
-                :se_dir,
-                :se_file,
+                :source,
+                :destination_dir,
+                :use_seperate_files,
                 :delayed
 
     attribute :runner, :kind_of => String, :required => true, :name_attribute => true
-    attribute :from_file, :kind_of => [TrueClass, FalseClass], :default => false
-    attribute :seperate_files, :kind_of => [TrueClass, FalseClass], :default => false
     attribute :version, :kind_of => Float, :default => 1.0
-    attribute :se_dir, :kind_of => String, :default => "/etc/selinux/local/selinux_rules.te"
-    attribute :se_file, :kind_of => String, :required => true
+    attribute :source, :kind_of => String, :default => nil
+    attribute :destination_dir, :kind_of => String, :default => '/etc/selinux/local'
+    attribute :use_seperate_files, :kind_of => [TrueClass, FalseClass], :default => false
     attribute :delayed, :kind_of => [TrueClass, FalseClass], :default => false
 
     def initialize(*args)
       super
       @action = :compile
       # Set some default values
-      @resource_name = :selinux_compile
-      @provider = Provider::SelinuxCompile
+      @resource_name = :selinux_module
+      @provider = Provider::SelinuxModule
       @runner = runner
-      @from_file = from_file
-      @seperate_files = seperate_files
       @version = version
-      @se_dir = se_dir
-      @se_file = se_file
+      @source = source
+      @destination_dir = destination_dir
+      @use_seperate_files = use_seperate_files
+      @te_filename = "selinux_rules.te"
     end
 
     def delayed(arg = nil)
@@ -49,24 +47,57 @@ class Chef
     end
   end
 
-  class Provider::SelinuxCompile < Provider::LWRPBase
+  class Provider::SelinuxModule < Provider::LWRPBase
+
+    use_inline_resources
+
     def whyrun_supported?
       true
     end
 
-    action :compile do
+    include Chef::Mixin::ShellOut
+
+    action :create do
 
       # If there are rules to create
       if SELinux.instance.types.length > 0
 
-        if new_resource.from_file
+        if not (new_resource.source.nil? or
+                new_resource.source.length = 0)
           # Compile file provided
+          cf = Chef::Resource::CookbookFile.new("copy_te_file_#{new_resource.source}")
+          cf.source(new_resource.source)
+          cf.path(new_resource.destination_directory)
+          cf.owner('root')
+          cf.group('root')
+          cf.mode(0644)
+          cf.run_action(:create)
+
+          if cf.updated_by_last_action?
+            compile_te_file("#{new_resource.destination_directory}/#{new_resource.source}")
+          else
+            Chef::Log.info("SELinux: File #{new_resource.destination_directory}/#{new_resource.source} is up to date")
+          end
         elsif new_resource.seperate_files
           # Create seperate files per App
+          create_te_file(new_resource.destination_dir,
+                         new_resource.te_filename,
+                         new_resource.runner,
+                         new_resource.version,
+                         SELinux.instance.types,
+                         SELinux.instance.classes,
+                         SELinux.instance.rules,
+                         true)
         else
           # Create single file for all rukes defined
-
-          create_te_file(new_resource.se_dir, new_resource.se_file, new_resource.runner, new_resource.version, true)
+          create_te_file(new_resource.destination_dir,
+                         new_resource.te_filename,
+                         new_resource.runner,
+                         new_resource.version,
+                         SELinux.instance.types,
+                         SELinux.instance.classes,
+                         SELinux.instance.rules,
+                         true)
       else
         Chef::Log.info "No SELinux rules found, no need to compile"
       end
@@ -75,7 +106,12 @@ class Chef
 
     private
 
-    def create_te_file(dir, file, runner, version, create?=true)
+    def compile_te_file(fn) do
+      module_name = "#{new_resource.destination_directory}/#{file.sub(/\.te$/,'')}"
+      shell_out!("/usr/bin/checkmodule -m -M -o #{module_name}.mod #{module_name}.te && /usr/bin/semodule_package -o #{module_name}.pp -m #{module_name}.mod && /usr/sbin/semodule -i #{module_name}.pp")
+    end
+
+    def create_te_file(dir, file, runner, version, types, classes, rules, create?=true)
       directory dir do
         owner 'root'
         group 'root'
@@ -83,26 +119,22 @@ class Chef
         mode 0755
       end
 
-      template "#{dir}/#{file}" do
-        source 'selinux_rules.erb'
-        cookbook 'selinux'
-        variables(
+      t = Chef::Resource::Template.new("create_te_file_#{dir}/#{file}"
+      t.sourcer('selinux_rules.erb')
+      t.cookbook('selinux')
+      t.variables(
           :recipe_file => (__FILE__).to_s.split('cookbooks/').last,
           :template_file => source.to_s,
           :name => runner,
           :version => version,
-          :types => SELinux.instance.types,
-          :classes => SELinux.instance.classes,
-          :rules => SELinux.instance.rules
+          :types => types,
+          :classes => classes,
+          :rules => rules
         )
-        notifies :run, 'execute[selinux_policy_install]', :immediately
-      end
+      t.run_action(:create)
 
-      module_name = "#{dir}/#{file.sub(/\.te$/,'')}"
-
-      execute 'selinux_policy_install' do
-        command "/usr/bin/checkmodule -m -M -o #{module_name}.mod #{module_name}.te && /usr/bin/semodule_package -o #{module_name}.pp -m #{module_name}.mod && /usr/sbin/semodule -i #{module_name}.pp"
-        action :nothing
+      if t.updated_by_last_action?
+          compile_te_file("#{dir}/#{file}")
       end
     end
 
