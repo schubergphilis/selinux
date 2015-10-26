@@ -98,6 +98,7 @@ class Chef
                          SELinux.instance.classes,
                          SELinux.instance.rules,
                          true)
+          # create_te_file(new_resource.se_dir, new_resource.se_file, new_resource.runner, new_resource.version, true)
       else
         Chef::Log.info "No SELinux rules found, no need to compile"
       end
